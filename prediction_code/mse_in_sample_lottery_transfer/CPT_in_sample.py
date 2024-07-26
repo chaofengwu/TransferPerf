@@ -291,24 +291,6 @@ class ML_models():
 
 
 
-# get data
-data_folder = '../../data/PPP_normalized_44'
-file_list, file_name = file_in_folder(data_folder)
-file_list = [i for i in file_list if '.csv' in i]
-file_name = [i for i in file_name if '.csv' in i]
-num_name_dic = {i: name for i, name in enumerate(file_name)}
-name_num_dic = {name: i for i, name in enumerate(file_name)}
-
-print(num_name_dic)
-data_dic = {}
-for idx, file in enumerate(file_list):
-    df = pd.read_csv(file)
-#     display(df)
-    data_dic[file_name[idx]] = df
-
-
-num_domains = len(num_name_dic.keys())
-
 
 all_params = ['a', 'b', 'd', 'g']
 model_types = []
@@ -325,21 +307,39 @@ print(model_types)
 input_num = int(sys.argv[1])
 train_domain_num = input_num // len(model_types)
 model_type_number = input_num % len(model_types)
-# print(train_domain_num, model_type_number)
 
-training_combs = list(itertools.combinations(list(range(num_domains)), 1))
-# training_combs = list(itertools.combinations(list(range(16)), 6))
+
+# get data
+
+df = pd.read_csv('../../data/PPP_normalized_pooled_data/30countries.csv')
+
+a, b = np.unique(df['lottery'], return_counts=True)
+
+useful_lottery_num = []
+for i in range(b.shape[0]):
+    if b[i] > 2900:
+        useful_lottery_num.append(int(a[i]))
+print(useful_lottery_num, len(useful_lottery_num))
+# in total 24 lotteries
+num_domains = len(useful_lottery_num)
+
+# train_domain_num = int(sys.argv[1])
+# train_domain_num = train_domain_num
+# experiment_type = int(sys.argv[2])
+
+# training_combs = list(itertools.combinations(list(range(num_domains)), 1))
+training_combs = list(itertools.combinations(useful_lottery_num, 1))
+
 cur_comb = training_combs[train_domain_num]
 experiment_type = '_'.join([str(i) for i in cur_comb])
 train_domain = []
 
-for i in range(num_domains):
+for i in useful_lottery_num:
+# for i in range(2, 5):
     if i in cur_comb:
         train_domain.append(i)
 
-
-print(train_domain)
-
+print(cur_comb, train_domain)
 
 # pooled data
 pooled_data = None
@@ -348,23 +348,23 @@ target_col = ['ce']
 all_cols = training_cols + target_col
 data_sizes = []
 test_data = {}
-for name_key, val in data_dic.items():
-    # print(name_key, val.shape)
-    num_key = name_num_dic[name_key]
-
-    if num_key not in train_domain:
-        test_data[num_key] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
-        print(test_data[num_key]['X'].shape, test_data[num_key]['y'].shape)
+for lottery_num in useful_lottery_num:
+    val = df[df['lottery'] == lottery_num]
+    if lottery_num not in train_domain:
+        test_data[lottery_num] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
+        print(test_data[lottery_num]['X'].shape, test_data[lottery_num]['y'].shape)
     else:
-    # data_sizes.append(val.shape[0])
         if pooled_data is None:
             pooled_data = val[all_cols]
         else:
             pooled_data = pd.concat((pooled_data, val[all_cols]))
 
 
+
 X = pooled_data[training_cols].values
 y = pooled_data[target_col].values.reshape(-1,)
+print(test_data.keys())
+print(X.shape, y.shape)
 
 method_list = [
     # 'Nelder-Mead', 
@@ -429,7 +429,7 @@ for method in method_list:
         res['initial'] = initial
         res['train_mse'] = tmp['fun']
         res['parameters'] = tmp['x']
-        res['train_domain'] = num_name_dic[train_domain_num]
+        # res['train_domain'] = num_name_dic[train_domain_num]
         res['train_domain_num'] = train_domain_num
         success_flag = tmp['success']
 

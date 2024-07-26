@@ -195,132 +195,116 @@ class EU_model():
 
 
 
+
 # get data
-data_folder = '../../data/PPP_normalized_44'
-file_list, file_name = file_in_folder(data_folder)
-file_list = [i for i in file_list if '.csv' in i]
-file_name = [i for i in file_name if '.csv' in i]
-num_name_dic = {i: name for i, name in enumerate(file_name)}
-name_num_dic = {name: i for i, name in enumerate(file_name)}
 
-# print(num_name_dic)
-data_dic = {}
-for idx, file in enumerate(file_list):
-    df = pd.read_csv(file)
-#     display(df)
-    data_dic[file_name[idx]] = df
+df = pd.read_csv('../../data/PPP_normalized_pooled_data/30countries.csv')
 
+a, b = np.unique(df['lottery'], return_counts=True)
 
-num_domains = len(num_name_dic.keys())
+useful_lottery_num = []
+for i in range(b.shape[0]):
+    if b[i] > 2900:
+        useful_lottery_num.append(int(a[i]))
+print(useful_lottery_num, len(useful_lottery_num))
+# in total 24 lotteries
+num_domains = len(useful_lottery_num)
 
+train_domain_num_batch = int(sys.argv[1])
+# train_domain_num = train_domain_num
+# experiment_type = int(sys.argv[2])
 
-all_params = ['a', 'b', 'd', 'g']
-model_types = []
-for i in range(1, len(all_params)+1):
-    tmp = list(itertools.combinations(all_params, i))
-    model_types += tmp
-    
-model_types = [''.join(i) for i in model_types]
-# model_types = [model_types[-1]]
-model_types = ['a', 'ab', 'dg', 'abg', 'abdg']
-model_types = ['a']
-print(model_types)
+for train_domain_num in range(10*train_domain_num_batch, 10*(train_domain_num_batch+1)):
+    if train_domain_num > 42503:
+        continue
+# training_combs = list(itertools.combinations(list(range(num_domains)), 1))
+    training_combs = list(itertools.combinations(useful_lottery_num, 5))
 
-# total: 44 * 15 = 660
-input_num = int(sys.argv[1])
-train_domain_num = input_num #// len(model_types)
-#model_type_number = input_num % len(model_types)
-# print(train_domain_num, model_type_number)
+    cur_comb = training_combs[train_domain_num]
+    experiment_type = '_'.join([str(i) for i in cur_comb])
+    train_domain = []
 
-training_combs = list(itertools.combinations(list(range(num_domains)), 3))
-print(len(training_combs))
-# training_combs = list(itertools.combinations(list(range(16)), 6))
-cur_comb = training_combs[train_domain_num]
-experiment_type = '_'.join([str(i) for i in cur_comb])
-train_domain = []
+    for i in useful_lottery_num:
+    # for i in range(2, 5):
+        if i in cur_comb:
+            train_domain.append(i)
 
-for i in range(num_domains):
-    if i in cur_comb:
-        train_domain.append(i)
+    print(cur_comb, train_domain)
 
-
-print(train_domain)
-
-
-# pooled data
-pooled_data = None
-training_cols = ['z1', 'z2', 'p1']
-target_col = ['ce']
-all_cols = training_cols + target_col
-data_sizes = []
-test_data = {}
-for name_key, val in data_dic.items():
-    # print(name_key, val.shape)
-    num_key = name_num_dic[name_key]
-
-    if num_key not in train_domain:
-        test_data[num_key] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
-        # print(test_data[num_key]['X'].shape, test_data[num_key]['y'].shape)
-    else:
-    # data_sizes.append(val.shape[0])
-        if pooled_data is None:
-            pooled_data = val[all_cols]
+    # pooled data
+    pooled_data = None
+    training_cols = ['z1', 'z2', 'p1']
+    target_col = ['ce']
+    all_cols = training_cols + target_col
+    data_sizes = []
+    test_data = {}
+    for lottery_num in useful_lottery_num:
+        val = df[df['lottery'] == lottery_num]
+        if lottery_num not in train_domain:
+            test_data[lottery_num] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
+            print(test_data[lottery_num]['X'].shape, test_data[lottery_num]['y'].shape)
         else:
-            pooled_data = pd.concat((pooled_data, val[all_cols]))
+            if pooled_data is None:
+                pooled_data = val[all_cols]
+            else:
+                pooled_data = pd.concat((pooled_data, val[all_cols]))
 
 
-X = pooled_data[training_cols].values
-y = pooled_data[target_col].values.reshape(-1,)
 
-print(test_data.keys())
-method_list = [
-    # 'Nelder-Mead', 
-    'Powell', 
-    'L-BFGS-B', 
-    'TNC', 
-    # 'SLSQP', 
-    'trust-constr'
-]
+    X = pooled_data[training_cols].values
+    y = pooled_data[target_col].values.reshape(-1,)
+    print(test_data.keys())
+    print(X.shape, y.shape)
 
-# seed_list = [0, 1, 2]
-# initial_points = [[1 for i in range(4)]]
+    print(test_data.keys())
+    method_list = [
+        # 'Nelder-Mead', 
+        'Powell', 
+        'L-BFGS-B', 
+        'TNC', 
+        # 'SLSQP', 
+        'trust-constr'
+    ]
 
-initial_points = [[1e-6 for i in range(4)], [0.5 for i in range(4)], [1 for i in range(4)]]
-initial_points = [[i] for i in range(1, 101, 20)]
+    # seed_list = [0, 1, 2]
+    # initial_points = [[1 for i in range(4)]]
 
-
-res_fol = 'in_sample'
-try:
-    if not os.path.isdir(res_fol):
-        os.mkdir(res_fol)
-except:
-    pass
-res_fol = os.path.join(res_fol, f'{experiment_type}')
-try:
-    if not os.path.isdir(res_fol):
-        os.mkdir(res_fol)
-except:
-    pass
+    initial_points = [[1e-6 for i in range(4)], [0.5 for i in range(4)], [1 for i in range(4)]]
+    initial_points = [[i] for i in range(1, 101, 20)]
 
 
-def check_range(model_type, values):
-    param_bounds = {'e': (1e-6,100)}
-    for idx, param in enumerate(param_bounds.keys()):
-        left, right = param_bounds[param]
-        if right is None:
-            right = np.inf
-        cur_value = values[idx]
-        if cur_value < left or cur_value > right:
-            return False
-    return True
+    res_fol = 'in_sample'
+    try:
+        if not os.path.isdir(res_fol):
+            os.mkdir(res_fol)
+    except:
+        pass
+    res_fol = os.path.join(res_fol, f'{experiment_type}')
+    try:
+        if not os.path.isdir(res_fol):
+            os.mkdir(res_fol)
+    except:
+        pass
 
-res = {}
-count = 0
-# model_type = model_types[model_type_number]
-model_type = 'EU_iso'
-for method in method_list:
-    # if count == cur_idx:
-    for model_type in model_types:
+
+    def check_range(model_type, values):
+        param_bounds = {'e': (1e-6,100)}
+        for idx, param in enumerate(param_bounds.keys()):
+            left, right = param_bounds[param]
+            if right is None:
+                right = np.inf
+            cur_value = values[idx]
+            if cur_value < left or cur_value > right:
+                return False
+        return True
+
+    res = {}
+    count = 0
+    # model_type = model_types[model_type_number]
+    model_type = 'EU_iso'
+    for method in method_list:
+        # if count == cur_idx:
+        # for model_type in model_types:
 
         print(model_type, train_domain_num, method)
         for num, initial in enumerate(initial_points):

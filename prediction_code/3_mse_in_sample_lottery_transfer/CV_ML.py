@@ -7,8 +7,8 @@ from json import JSONEncoder
 import pandas as pd
 import sklearn
 from random import seed
-from sklearn.model_selection import KFold
-from sklearn import linear_model, ensemble, neighbors, tree
+from sklearn.model_selection import KFold, RandomizedSearchCV
+from sklearn import linear_model, ensemble, neighbors, tree, kernel_ridge
 from sklearn import metrics
 from sklearn.neural_network import MLPRegressor
 import scipy
@@ -139,7 +139,7 @@ class CPT_model():
 
         return np.array(final_ce)
     
-    def complexity_func(self, to_optimize, X, y):
+    def complexity_func(self, to_optimize, X, y, sigma):
         # to_optimize = [alpha, beta, delta, gamma]
 #         alpha, beta, delta, gamma = to_optimize
         alpha = None
@@ -166,33 +166,30 @@ class CPT_model():
                 continue
 
 
-        # errors = []
-        # for idx in range(len(X)):
-        #     cur_X = X[idx]
-        #     cur_y = y[idx]
-        #     y_pred = self.func(cur_X, alpha, beta, delta, gamma)
+        errors = []
+        for idx in range(len(X)):
+            cur_X = X[idx]
+            cur_y = y[idx]
+            y_pred = self.func(cur_X, alpha, beta, delta, gamma)
 
 
-        #     # cur_error = np.sum(np.power(cur_y-y_pred, 2)) / len(y_pred)
-        #     cur_error = np.power(cur_y-y_pred, 2)
-        #     if self.combine_average:
-        #         if len(errors) == 0:
-        #             errors.append(cur_error)
-        #         else:
-        #             errors[0] = np.concatenate((errors[0], cur_error))
-        #     else:
-        #         errors.append(np.mean(cur_error))
-        #     # print(cur_y.shape, y_pred.shape, cur_error.shape)
-        #     # print(cur_error.shape, y_pred.shape)
+            # cur_error = np.sum(np.power(cur_y-y_pred, 2)) / len(y_pred)
+            cur_error = np.power(cur_y-y_pred, 2)
+            if self.combine_average:
+                if len(errors) == 0:
+                    errors.append(cur_error)
+                else:
+                    errors[0] = np.concatenate((errors[0], cur_error))
+            else:
+                errors.append(np.mean(cur_error))
+            # print(cur_y.shape, y_pred.shape, cur_error.shape)
+            # print(cur_error.shape, y_pred.shape)
         
-        # errors = np.array(errors)
-        # errors = np.mean(errors)
-        # # print(errors, errors.shape)
-        # # print(errors, sigma)
-        # # inner_prod = np.dot(errors, sigma) / len(errors)
-
-        y_pred = self.func(X, alpha, beta, delta, gamma)
-        errors = metrics.mean_squared_error(y_true=y, y_pred=y_pred)
+        errors = np.array(errors)
+        errors = np.mean(errors)
+        # print(errors, errors.shape)
+        # print(errors, sigma)
+        # inner_prod = np.dot(errors, sigma) / len(errors)
         inner_prod = errors
         if inner_prod < self.cur_min:
             # print(-inner_prod, alpha, beta, delta, gamma)
@@ -204,50 +201,43 @@ class CPT_model():
         res = optimization.minimize(self.complexity_func, self.initial_values, args=(X, y, sigma), method=self.minimize_method, bounds=self.bound)
         return res
     
-    def update_param(self, params):
-        tmp = []
-        count = 0
-        for i in self.possible_params:
-            if i in self.model_type:
-                tmp.append(params[count])
-                count += 1
-            else:
-                tmp.append(None)
-        self.fitted_parameters = tmp
-
-
     def fit(self, X, y, warm_start=None):
-        res = optimization.minimize(self.complexity_func, self.initial_values, args=(X, y), method=self.minimize_method, bounds=self.bound)
-        params = res['x']
-        self.update_param(params)
-        return res
+        self.fitted_parameters, self.cov = optimization.curve_fit(self.func, X, y)
+        self.param_print()
     
     def predict(self, X):
         pred = self.func(X, *self.fitted_parameters)
         return pred
-
-    def get_error(self, X, y, metric_type='mse'):
-        pred = self.predict(X)
-        if np.any(np.isnan(pred)):
-            print('pred includes nan')
-        if not np.all(np.isfinite(pred)):
-            print('pred includes infinite')
-            # print(X[np.array(np.isfinite(pred))*-1+1])
-        if metric_type == 'mse':
-
-            return metrics.mean_squared_error(y_true=y, y_pred=pred)
-        else:
-            print('ERROR: wrong metric type')
     
     def param_print(self):
         print(f'Parameters: {self.parameter_names}. {self.fitted_parameters}')
 
 
 class ML_models():
-    def __init__(self, model_type='DT', random_seed=0):
+    def __init__(self, model_type='DT', random_seed=0, CV_param=False, X=None, y=None, cv_idx=None):
         self.model_type = model_type
         self.random_seed = random_seed
         self.model_ft = self.create_model()
+        # print(self.model_ft.get_params())
+        if CV_param:
+            param_to_search = {
+                'RF': {
+                    'max_depth': [i*5 for i in range(1, 11)], 
+
+                }, 
+                'kernel_ridge_rbf': {
+                    'gamma': [1e-4, 1e-3, 1e-2, 1e-1, 1/3, 1],
+                }
+            }
+            num_iter = 1
+            cur_params = param_to_search[self.model_type]
+            for key, val in cur_params.items():
+                num_iter *= len(val)
+            # print(num_iter)
+            model_ft_cv = RandomizedSearchCV(estimator=self.model_ft, param_distributions=cur_params, n_iter=num_iter, cv=cv_idx, scoring='neg_mean_squared_error')
+            model_ft_cv.fit(X, y)
+            self.model_ft = model_ft_cv.best_estimator_
+            # print(self.model_ft.get_params())
 
     def create_model(self):
         if self.model_type == 'DT':
@@ -255,7 +245,15 @@ class ML_models():
         elif self.model_type == 'RF':
             return ensemble.RandomForestRegressor(random_state=self.random_seed)
         elif self.model_type == 'NN':
-            return MLPRegressor(random_state=self.random_seed)
+            return MLPRegressor(random_state=self.random_seed, 
+                hidden_layer_sizes=(100,), solver='lbfgs', max_iter=5000, learning_rate='adaptive', learning_rate_init=1e-3, activation='tanh')
+        elif self.model_type == 'Lasso':
+            return linear_model.Lasso(random_state=self.random_seed)
+        elif self.model_type == 'kernel_ridge_poly':
+            return kernel_ridge.KernelRidge(degree=1, kernel="poly")
+        elif self.model_type == 'kernel_ridge_rbf':
+            # return KR()
+            return kernel_ridge.KernelRidge(degree=1, kernel="rbf")
         else:
             print('ERROR: wrong model type')
 
@@ -292,96 +290,87 @@ class ML_models():
 
 
 # get data
-data_folder = '../../data/PPP_normalized_44'
-file_list, file_name = file_in_folder(data_folder)
-file_list = [i for i in file_list if '.csv' in i]
-file_name = [i for i in file_name if '.csv' in i]
-num_name_dic = {i: name for i, name in enumerate(file_name)}
-name_num_dic = {name: i for i, name in enumerate(file_name)}
 
-print(num_name_dic)
-data_dic = {}
-for idx, file in enumerate(file_list):
-    df = pd.read_csv(file)
-#     display(df)
-    data_dic[file_name[idx]] = df
+df = pd.read_csv('../../data/PPP_normalized_pooled_data/30countries.csv')
 
+a, b = np.unique(df['lottery'], return_counts=True)
 
-num_domains = len(num_name_dic.keys())
+useful_lottery_num = []
+for i in range(b.shape[0]):
+    if b[i] > 2900:
+        useful_lottery_num.append(int(a[i]))
+print(useful_lottery_num, len(useful_lottery_num))
+# in total 24 lotteries
+num_domains = len(useful_lottery_num)
 
+train_domain_num = int(sys.argv[1])
+# train_domain_num = train_domain_num
+# experiment_type = int(sys.argv[2])
 
-all_params = ['a', 'b', 'd', 'g']
-model_types = []
-for i in range(1, len(all_params)+1):
-    tmp = list(itertools.combinations(all_params, i))
-    model_types += tmp
-    
-model_types = [''.join(i) for i in model_types]
-# model_types = [model_types[-1]]
-# model_types = ['g', 'ab', 'dg', 'abg', 'abdg']
-print(model_types)
-
-# total: 44 * 15 = 660
-input_num = int(sys.argv[1])
-train_domain_num = input_num // len(model_types)
-model_type_number = input_num % len(model_types)
-# print(train_domain_num, model_type_number)
-
-training_combs = list(itertools.combinations(list(range(num_domains)), 1))
-# training_combs = list(itertools.combinations(list(range(16)), 6))
+# training_combs = list(itertools.combinations(list(range(num_domains)), 1))
+training_combs = list(itertools.combinations(useful_lottery_num, 3))
+print(len(training_combs))
 cur_comb = training_combs[train_domain_num]
 experiment_type = '_'.join([str(i) for i in cur_comb])
 train_domain = []
 
-for i in range(num_domains):
+for i in useful_lottery_num:
+# for i in range(2, 5):
     if i in cur_comb:
         train_domain.append(i)
 
-
-print(train_domain)
-
+print(cur_comb, train_domain)
 
 # pooled data
+cv_idx = []
 pooled_data = None
 training_cols = ['z1', 'z2', 'p1']
 target_col = ['ce']
 all_cols = training_cols + target_col
 data_sizes = []
 test_data = {}
-for name_key, val in data_dic.items():
-    # print(name_key, val.shape)
-    num_key = name_num_dic[name_key]
-
-    if num_key not in train_domain:
-        test_data[num_key] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
-        print(test_data[num_key]['X'].shape, test_data[num_key]['y'].shape)
+for lottery_num in useful_lottery_num:
+    val = df[df['lottery'] == lottery_num]
+    if lottery_num not in train_domain:
+        test_data[lottery_num] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
+        print(test_data[lottery_num]['X'].shape, test_data[lottery_num]['y'].shape)
     else:
-    # data_sizes.append(val.shape[0])
+        data_sizes.append(val.shape[0])
         if pooled_data is None:
             pooled_data = val[all_cols]
         else:
             pooled_data = pd.concat((pooled_data, val[all_cols]))
 
 
+sumup = 0
+for v in data_sizes:
+    test_idx = list(range(sumup, sumup + v))
+    train_idx = list(range(0, sumup)) + list(range(sumup + v, np.sum(data_sizes)))
+    cv_idx.append([train_idx, test_idx])
+    sumup += v
+
 X = pooled_data[training_cols].values
 y = pooled_data[target_col].values.reshape(-1,)
+print(test_data.keys())
+print(X.shape, y.shape)
 
-method_list = [
-    # 'Nelder-Mead', 
-    'Powell', 
-    'L-BFGS-B', 
-    'TNC', 
-    # 'SLSQP', 
-    'trust-constr'
-]
-
-# seed_list = [0, 1, 2]
+seed_list = [0]
 # initial_points = [[1 for i in range(4)]]
 
-initial_points = [[1e-6 for i in range(4)], [0.5 for i in range(4)], [1 for i in range(4)]]
+model_types = ['Lasso', 'RF', 'NN']
 
+model_types = ['RF', 'kernel_ridge_rbf']
+# model_types = [model_types[-1]]
+print(model_types)
+
+# visit_methods = {}
+# visit_models = {}
+# res = {'model': model_types}
+
+# res_fol = 'complexity_res'
 
 res_fol = 'in_sample'
+# res_fol = 'lasso test'
 try:
     if not os.path.isdir(res_fol):
         os.mkdir(res_fol)
@@ -395,51 +384,29 @@ except:
     pass
 
 
-def check_range(model_type, values):
-    param_bounds = {'a': (1e-8,1), 'b': (1e-8,1), 'd': (1e-8,None), 'g': (1e-8,1)}
-    for idx, param in enumerate(model_type):
-        left, right = param_bounds[param]
-        if right is None:
-            right = np.inf
-        cur_value = values[idx]
-        if cur_value < left or cur_value > right:
-            return False
-    return True
-
+# print(X, y)
 res = {}
 count = 0
-model_type = model_types[model_type_number]
-for method in method_list:
-    # if count == cur_idx:
-    # for model_type in model_types:
-
-    print(model_type, train_domain_num, method)
-    for num, initial in enumerate(initial_points):
-        # cur_model = ML_models(model_type=model_type, random_seed=cur_seed)
+for model_type in model_types:
+    res_file = os.path.join(res_fol, f'{model_type}.json')
+    # res_file = os.path.join('.', f'domain_cv_{model_type}_new.json')
+    if os.path.exists(res_file):
+        continue
+    for cur_seed in seed_list:
+        # if count == cur_idx:
+        print(train_domain_num, model_type, cur_seed, experiment_type)
+        cur_model = ML_models(model_type=model_type, random_seed=cur_seed, CV_param=True, X=X, y=y, cv_idx=cv_idx)
         # cur_model.fit(X, y)
-
-        # res_list, sigma_list = rademacher_complexity(model_type=i, minimize_method=method, X=X, y=y, num_sampling=1, bounds=None, iterate_all=False)
-        
-        cur_model = CPT_model(minimize_method=method, model_type=model_type, initial_values=initial)
-        res_list = cur_model.fit(X=X, y=y)
-        print(res_list)
-        res['method'] = method
+        error = cur_model.get_error(X, y)
+        res['seed'] = cur_seed
         res['model_type'] = model_type
-        tmp = dict(res_list)
-        res['initial'] = initial
-        res['train_mse'] = tmp['fun']
-        res['parameters'] = tmp['x']
-        res['train_domain'] = num_name_dic[train_domain_num]
+        res['model_param'] = cur_model.model_ft.get_params()
+        res['train_mse'] = error
+        # res['train_domain'] = num_name_dic[train_domain_num]
         res['train_domain_num'] = train_domain_num
-        success_flag = tmp['success']
 
-        if not success_flag or not check_range(model_type, tmp['x']):
-            print('not success or out of range')
-            continue
-
-        res_file = os.path.join(res_fol, f'{model_type}.json')
+        # res_file = os.path.join(res_fol, f'{model_type}_new.json')
         # res_model_file = os.path.join(res_fol, f'{model_type}.pkl')
-
         keep_old = False
         if os.path.isfile(res_file):
             print('compare with old result')
@@ -447,9 +414,7 @@ for method in method_list:
                 old_res = json.load(f)
             if old_res['train_mse'] < res['train_mse']:
                 keep_old = True
-        print(res)
-
-
+        
         if not keep_old:
             print('Write new')
             print('generate test error')
@@ -457,14 +422,12 @@ for method in method_list:
             for key, val in test_data.items():
                 # print(key, num_name_dic[key])
                 res['test_mse'][key] = cur_model.get_error(val['X'], val['y'])
-            print(res)
-            res = json.dumps(res, cls=NumpyArrayEncoder)
-            res = json.loads(res)
+            # print(res)    
             with open(res_file, 'w') as f:
                 json.dump(res, f)
+            # cur_model.save_model(res_model_file)
 
-
-
+        count += 1
 
 
 

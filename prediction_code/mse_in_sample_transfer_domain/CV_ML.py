@@ -170,7 +170,7 @@ class ML_models():
 
 # get data
 
-data_folder = '../../../data/PPP_normalized_44'
+data_folder = '../../data/PPP_normalized_44'
 file_list, file_name = file_in_folder(data_folder)
 file_list = [i for i in file_list if '.csv' in i]
 file_name = [i for i in file_name if '.csv' in i]

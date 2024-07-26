@@ -63,17 +63,17 @@ def file_in_folder(folder_path, flag=1): # get files in given folder, return lis
     return [file_list, file_name]
 
 
-class CPT_model():
-    def __init__(self, minimize_method=None, bound=None, model_type='abdg', initial_values=None, combine_average=True):
+class EU_model():
+    def __init__(self, minimize_method=None, bound=None, model_type='e', initial_values=None, combine_average=True):
         # if True, combine all error then take average; if False, take average of domains then take average over three domains
         self.combine_average = combine_average
         
         self.fitted_parameters = None
         self.cov = None
-        self.parameter_names = 'alpha, beta, delta, gamma'
-        self.possible_params = ['a', 'b', 'd', 'g']
+        self.parameter_names = 'e'
+        self.possible_params = ['e']
         if bound is None:
-            self.param_bounds = {'a': (1e-8,1), 'b': (1e-8,1), 'd': (1e-8,None), 'g': (1e-8,1)}
+            self.param_bounds = {'e': (1e-6,100)}
         else:
             self.param_bounds = bound
         self.cur_min = 1000000
@@ -94,7 +94,7 @@ class CPT_model():
         self.cov = None
         self.cur_min = 1000000
     
-    def func(self, data, alpha, beta, delta, gamma):
+    def func(self, data, e):
         # data: [z1, z2, p1]
         if len(data.shape) == 1: 
             # only one example
@@ -102,96 +102,46 @@ class CPT_model():
         z1 = data[:, 0]
         z2 = data[:, 1]
         p = data[:, 2]
-        if alpha is None:
-            alpha = 1
-        if beta is None:
-            beta = 1
-        if delta is None:
-            delta = 1
-        if gamma is None:
-            gamma = 1
-        wp = delta*np.power(p, gamma) / (delta*np.power(p, gamma) + np.power(1-p, gamma))
 
-        vz1 = []
-        vz2 = []
-
-        for i in range(len(data)):
-            if z1[i] >= 0:
-                vz1.append(np.power(z1[i], alpha))
-            else:
-                vz1.append(-1*np.power(-1*z1[i], beta))
-            if z2[i] >= 0:
-                vz2.append(np.power(z2[i], alpha))
-            else:
-                vz2.append(-1*np.power(-1*z2[i], beta))
-
-        vz1 = np.array(vz1)
-        vz2 = np.array(vz2)
-
-        vgg = wp*vz1 + (1-wp)*vz2
+        z1 = np.array(z1)
+        z2 = np.array(z2)
 
         final_ce = []
-        for i in vgg:
-            if i >= 0:
-                final_ce.append(np.power(i, 1/alpha))
+        # print(z1.shape)
+        for i in range(z1.shape[0]):
+            c_z1 = z1[i]
+            c_z2 = z2[i]
+            c_p = p[i]
+            # print(c_z1.shape, c_z2.shape)
+            if c_z1 < 0:
+                sign = -1
+                c_z1 = -c_z1
+                c_z2 = -c_z2
             else:
-                final_ce.append(-1*np.power(-i, 1/beta))
-
+                sign = 1
+            if np.abs(e-1) < 1e-6:
+                # vgg = c_p*np.log(c_z1) + (1-c_p)*np.log(c_z2)
+                final_ce.append(sign * (np.power(c_z1, c_p) * np.power(c_z2, 1-c_p)))
+            else:
+                # vgg = c_p*(np.power(c_z1, 1-e)-1)/(1-e) + (1-c_p)*(np.power(c_z2, 1-e)-1)/(1-e)
+                # final_ce.append(sign * np.power(1+(1-e)*vgg, 1/(1-e)))
+                # print(c_z1, c_z2, c_p, e, 1-e)
+                if c_z2 == 0:
+                    final_ce.append(sign * c_z1 * np.power(c_p+(1-c_p)/np.power(c_z1, 1-e), 1/(1-e)))
+                else:
+                    # print(c_p, c_z1, c_z2, 1-e, c_p*np.power(c_z1, 1-e)+(1-c_p)*np.power(c_z2, 1-e))
+                    # final_ce.append(sign * np.power(c_p*np.power(c_z1, 1-e)+(1-c_p)*np.power(c_z2, 1-e), 1/(1-e)))
+                    final_ce.append(sign * c_z1 * np.power(c_p + (1-c_p)*np.power(c_z2/c_z1, 1-e), 1/(1-e)))
+        # print(len(final_ce), len(final_ce[0]))
         return np.array(final_ce)
     
     def complexity_func(self, to_optimize, X, y):
         # to_optimize = [alpha, beta, delta, gamma]
 #         alpha, beta, delta, gamma = to_optimize
-        alpha = None
-        beta = None
-        delta = None
-        gamma = None
-        visited_param = {}
-        for i in to_optimize:
-            if 'a' not in visited_param.keys() and 'a' in self.model_type:
-                alpha = i
-                visited_param['a'] = 1
-                continue
-            if 'b' not in visited_param.keys() and 'b' in self.model_type:
-                beta = i
-                visited_param['b'] = 1
-                continue
-            if 'd' not in visited_param.keys() and 'd' in self.model_type:
-                delta = i
-                visited_param['d'] = 1
-                continue
-            if 'g' not in visited_param.keys() and 'g' in self.model_type:
-                gamma = i
-                visited_param['g'] = 1
-                continue
+        a = to_optimize[0]
 
-
-        # errors = []
-        # for idx in range(len(X)):
-        #     cur_X = X[idx]
-        #     cur_y = y[idx]
-        #     y_pred = self.func(cur_X, alpha, beta, delta, gamma)
-
-
-        #     # cur_error = np.sum(np.power(cur_y-y_pred, 2)) / len(y_pred)
-        #     cur_error = np.power(cur_y-y_pred, 2)
-        #     if self.combine_average:
-        #         if len(errors) == 0:
-        #             errors.append(cur_error)
-        #         else:
-        #             errors[0] = np.concatenate((errors[0], cur_error))
-        #     else:
-        #         errors.append(np.mean(cur_error))
-        #     # print(cur_y.shape, y_pred.shape, cur_error.shape)
-        #     # print(cur_error.shape, y_pred.shape)
-        
-        # errors = np.array(errors)
-        # errors = np.mean(errors)
-        # # print(errors, errors.shape)
-        # # print(errors, sigma)
-        # # inner_prod = np.dot(errors, sigma) / len(errors)
-
-        y_pred = self.func(X, alpha, beta, delta, gamma)
+        y_pred = self.func(X, a)
+        # print(y.shape, y_pred.shape)
         errors = metrics.mean_squared_error(y_true=y, y_pred=y_pred)
         inner_prod = errors
         if inner_prod < self.cur_min:
@@ -243,103 +193,39 @@ class CPT_model():
         print(f'Parameters: {self.parameter_names}. {self.fitted_parameters}')
 
 
-class ML_models():
-    def __init__(self, model_type='DT', random_seed=0):
-        self.model_type = model_type
-        self.random_seed = random_seed
-        self.model_ft = self.create_model()
-
-    def create_model(self):
-        if self.model_type == 'DT':
-            return tree.DecisionTreeRegressor(random_state=self.random_seed)
-        elif self.model_type == 'RF':
-            return ensemble.RandomForestRegressor(random_state=self.random_seed)
-        elif self.model_type == 'NN':
-            return MLPRegressor(random_state=self.random_seed)
-        else:
-            print('ERROR: wrong model type')
-
-    def fit(self, X, y):
-        self.model_ft.fit(X, y)
-
-    def get_error(self, X, y, metric_type='mse'):
-        pred = self.predict(X)
-        if np.any(np.isnan(pred)):
-            print('pred includes nan')
-        if not np.all(np.isfinite(pred)):
-            print('pred includes infinite')
-            # print(X[np.array(np.isfinite(pred))*-1+1])
-        if metric_type == 'mse':
-
-            return metrics.mean_squared_error(y_true=y, y_pred=pred)
-        else:
-            print('ERROR: wrong metric type')
-
-
-    def predict(self, X):
-        return self.model_ft.predict(X)
-
-    def save_model(self, path=None):
-        with open(path, 'wb') as f:
-            pickle.dump(self.model_ft, f)
-
-
-    def load_model(self, path=None):
-        with open(path, 'rb') as f:
-            self.model_ft = pickle.load(f)
-
-
 
 
 # get data
-data_folder = '../../data/PPP_normalized_44'
-file_list, file_name = file_in_folder(data_folder)
-file_list = [i for i in file_list if '.csv' in i]
-file_name = [i for i in file_name if '.csv' in i]
-num_name_dic = {i: name for i, name in enumerate(file_name)}
-name_num_dic = {name: i for i, name in enumerate(file_name)}
 
-print(num_name_dic)
-data_dic = {}
-for idx, file in enumerate(file_list):
-    df = pd.read_csv(file)
-#     display(df)
-    data_dic[file_name[idx]] = df
+df = pd.read_csv('../../data/PPP_normalized_pooled_data/30countries.csv')
 
+a, b = np.unique(df['lottery'], return_counts=True)
 
-num_domains = len(num_name_dic.keys())
+useful_lottery_num = []
+for i in range(b.shape[0]):
+    if b[i] > 2900:
+        useful_lottery_num.append(int(a[i]))
+print(useful_lottery_num, len(useful_lottery_num))
+# in total 24 lotteries
+num_domains = len(useful_lottery_num)
 
+train_domain_num = int(sys.argv[1])
+# train_domain_num = train_domain_num
+# experiment_type = int(sys.argv[2])
 
-all_params = ['a', 'b', 'd', 'g']
-model_types = []
-for i in range(1, len(all_params)+1):
-    tmp = list(itertools.combinations(all_params, i))
-    model_types += tmp
-    
-model_types = [''.join(i) for i in model_types]
-# model_types = [model_types[-1]]
-# model_types = ['g', 'ab', 'dg', 'abg', 'abdg']
-print(model_types)
+# training_combs = list(itertools.combinations(list(range(num_domains)), 1))
+training_combs = list(itertools.combinations(useful_lottery_num, 1))
 
-# total: 44 * 15 = 660
-input_num = int(sys.argv[1])
-train_domain_num = input_num // len(model_types)
-model_type_number = input_num % len(model_types)
-# print(train_domain_num, model_type_number)
-
-training_combs = list(itertools.combinations(list(range(num_domains)), 1))
-# training_combs = list(itertools.combinations(list(range(16)), 6))
 cur_comb = training_combs[train_domain_num]
 experiment_type = '_'.join([str(i) for i in cur_comb])
 train_domain = []
 
-for i in range(num_domains):
+for i in useful_lottery_num:
+# for i in range(2, 5):
     if i in cur_comb:
         train_domain.append(i)
 
-
-print(train_domain)
-
+print(cur_comb, train_domain)
 
 # pooled data
 pooled_data = None
@@ -348,23 +234,23 @@ target_col = ['ce']
 all_cols = training_cols + target_col
 data_sizes = []
 test_data = {}
-for name_key, val in data_dic.items():
-    # print(name_key, val.shape)
-    num_key = name_num_dic[name_key]
-
-    if num_key not in train_domain:
-        test_data[num_key] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
-        print(test_data[num_key]['X'].shape, test_data[num_key]['y'].shape)
+for lottery_num in useful_lottery_num:
+    val = df[df['lottery'] == lottery_num]
+    if lottery_num not in train_domain:
+        test_data[lottery_num] = {'X': val[training_cols].values, 'y': val[target_col].values.reshape(-1,)}
+        print(test_data[lottery_num]['X'].shape, test_data[lottery_num]['y'].shape)
     else:
-    # data_sizes.append(val.shape[0])
         if pooled_data is None:
             pooled_data = val[all_cols]
         else:
             pooled_data = pd.concat((pooled_data, val[all_cols]))
 
 
+
 X = pooled_data[training_cols].values
 y = pooled_data[target_col].values.reshape(-1,)
+print(test_data.keys())
+print(X.shape, y.shape)
 
 method_list = [
     # 'Nelder-Mead', 
@@ -379,7 +265,7 @@ method_list = [
 # initial_points = [[1 for i in range(4)]]
 
 initial_points = [[1e-6 for i in range(4)], [0.5 for i in range(4)], [1 for i in range(4)]]
-
+initial_points = [[i] for i in range(1, 101, 20)]
 
 res_fol = 'in_sample'
 try:
@@ -396,8 +282,8 @@ except:
 
 
 def check_range(model_type, values):
-    param_bounds = {'a': (1e-8,1), 'b': (1e-8,1), 'd': (1e-8,None), 'g': (1e-8,1)}
-    for idx, param in enumerate(model_type):
+    param_bounds = {'e': (1e-6,100)}
+    for idx, param in enumerate(param_bounds.keys()):
         left, right = param_bounds[param]
         if right is None:
             right = np.inf
@@ -408,7 +294,8 @@ def check_range(model_type, values):
 
 res = {}
 count = 0
-model_type = model_types[model_type_number]
+# model_type = model_types[model_type_number]
+model_type = 'EU_iso'
 for method in method_list:
     # if count == cur_idx:
     # for model_type in model_types:
@@ -420,7 +307,8 @@ for method in method_list:
 
         # res_list, sigma_list = rademacher_complexity(model_type=i, minimize_method=method, X=X, y=y, num_sampling=1, bounds=None, iterate_all=False)
         
-        cur_model = CPT_model(minimize_method=method, model_type=model_type, initial_values=initial)
+        # cur_model = CPT_model(minimize_method=method, model_type=model_type, initial_values=initial)
+        cur_model = EU_model(minimize_method=method, initial_values=initial)
         res_list = cur_model.fit(X=X, y=y)
         print(res_list)
         res['method'] = method
@@ -429,14 +317,14 @@ for method in method_list:
         res['initial'] = initial
         res['train_mse'] = tmp['fun']
         res['parameters'] = tmp['x']
-        res['train_domain'] = num_name_dic[train_domain_num]
+        # res['train_domain'] = num_name_dic[train_domain_num]
         res['train_domain_num'] = train_domain_num
         success_flag = tmp['success']
 
         if not success_flag or not check_range(model_type, tmp['x']):
             print('not success or out of range')
             continue
-
+        # print(res)
         res_file = os.path.join(res_fol, f'{model_type}.json')
         # res_model_file = os.path.join(res_fol, f'{model_type}.pkl')
 
@@ -447,7 +335,7 @@ for method in method_list:
                 old_res = json.load(f)
             if old_res['train_mse'] < res['train_mse']:
                 keep_old = True
-        print(res)
+        # print(res)
 
 
         if not keep_old:
@@ -457,7 +345,7 @@ for method in method_list:
             for key, val in test_data.items():
                 # print(key, num_name_dic[key])
                 res['test_mse'][key] = cur_model.get_error(val['X'], val['y'])
-            print(res)
+            # print(res)
             res = json.dumps(res, cls=NumpyArrayEncoder)
             res = json.loads(res)
             with open(res_file, 'w') as f:
